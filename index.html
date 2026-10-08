@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>buk-cards</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #2c3e50; color: white; text-align: center; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: auto; background: #34495e; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+        input, button { padding: 12px; margin: 8px; font-size: 16px; border-radius: 6px; border: none; box-sizing: border-box; }
+        input { width: 80%; max-width: 280px; text-align: center; }
+        button { background: #e74c3c; color: white; cursor: pointer; font-weight: bold; transition: 0.2s; min-width: 140px; }
+        button:hover { background: #c0392b; }
+        .btn-group { display: flex; justify-content: center; gap: 15px; margin-top: 15px; }
+        .hidden { display: none !important; }
+        .player-tag { background: #232f3e; padding: 8px; margin: 4px; border-radius: 4px; }
+        .card { display: inline-block; padding: 25px 15px; margin: 5px; border-radius: 8px; font-weight: bold; color: white; text-shadow: 1px 1px 2px black; cursor: pointer; min-width: 70px; border: 2px solid white; box-shadow: 2px 2px 5px rgba(0,0,0,0.5); }
+        .card.Red { background: #e74c3c; }
+        .card.Blue { background: #3498db; }
+        .card.Green { background: #2ecc71; }
+        .card.Yellow { background: #f1c40f; color: black; text-shadow: none; }
+        .turn-highlight { border: 3px solid #2ecc71; padding: 10px; background: #27ae60; border-radius: 8px; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { opacity: 0.9; } 50% { opacity: 1; } 100% { opacity: 0.9; } }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🃏 buk-cards 🃏</h1>
+
+        <!-- STEP 1: Enter Username -->
+        <div id="step-username">
+            <h3>Enter your player identity:</h3>
+            <input type="text" id="username" placeholder="Choose Username" maxlength="15"><br>
+            <button onclick="submitUsername()">Continue</button>
+        </div>
+
+        <!-- STEP 2: Choose Action (Create vs Join) -->
+        <div id="step-choice" class="hidden">
+            <h3 id="greeting">Welcome!</h3>
+            <p>What would you like to do?</p>
+            <div class="btn-group">
+                <button onclick="selectCreate()" style="background: #2ecc71;">Host New Lobby</button>
+                <button onclick="selectJoin()" style="background: #3498db;">Join Existing</button>
+            </div>
+        </div>
+
+        <!-- STEP 3: Enter Join Code -->
+        <div id="step-join-code" class="hidden">
+            <h3>Enter Room Passcode:</h3>
+            <input type="text" id="lobby-code" placeholder="4-Letter Code" maxlength="4" style="text-transform: uppercase;"><br>
+            <div class="btn-group">
+                <button onclick="backToChoice()" style="background: #7f8c8d; min-width: 100px;">Back</button>
+                <button onclick="confirmJoin()">Enter Lobby</button>
+            </div>
+        </div>
+
+        <!-- SCREEN: Waiting Room Dashboard -->
+        <div id="lobby-screen" class="hidden">
+            <h2>Lobby Code: <span id="display-code" style="color: #f1c40f;"></span></h2>
+            <h3>Players Waiting:</h3>
+            <div id="player-list"></div>
+            <br>
+            <button id="start-btn" onclick="startGame()">Start Match</button>
+        </div>
+
+        <!-- SCREEN: Live Gameplay Arena -->
+        <div id="game-screen" class="hidden">
+            <div id="turn-indicator"></div>
+            <div id="opponents-status" style="margin: 15px 0;"></div>
+            
+            <hr style="border-color: #555;">
+            
+            <h3>Discard Pile (Top Card)</h3>
+            <div id="top-card-container"></div>
+            
+            <br>
+            <button onclick="drawCard()" style="background: #9b59b6;">🃏 Draw Card / Pass</button>
+            
+            <h3>Your Hand</h3>
+            <div id="hand-container"></div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let currentLobbyCode = '';
+        let myPlayerId = '';
+        let savedUsername = '';
+
+        socket.on('connect', () => { myPlayerId = socket.id; });
+
+        // Multi-Step Landing Page Routing Logic
+        function submitUsername() {
+            const user = document.getElementById('username').value.trim();
+            if (!user) return alert('Please enter a username');
+            
+            savedUsername = user;
+            document.getElementById('greeting').innerText = `Hello, ${savedUsername}! 👋`;
+            
+            document.getElementById('step-username').classList.add('hidden');
+            document.getElementById('step-choice').classList.remove('hidden');
+        }
+
+        function selectCreate() {
+            socket.emit('createRoom', { username: savedUsername });
+        }
+
+        function selectJoin() {
+            document.getElementById('step-choice').classList.add('hidden');
+            document.getElementById('step-join-code').classList.remove('hidden');
+        }
+
+        function backToChoice() {
+            document.getElementById('step-join-code').classList.add('hidden');
+            document.getElementById('step-choice').classList.remove('hidden');
+        }
+
+        function confirmJoin() {
+            const code = document.getElementById('lobby-code').value.trim();
+            if (!code) return alert('Please enter a 4-letter room code');
+            socket.emit('joinRoom', { username: savedUsername, code: code });
+        }
+
+        // Live Match Mechanics
+        function startGame() { socket.emit('startGame', { code: currentLobbyCode }); }
+        function drawCard() { socket.emit('drawCard', { code: currentLobbyCode }); }
+        function playCard(index) { socket.emit('playCard', { code: currentLobbyCode, cardIndex: index }); }
+
+        // Socket Events
+        socket.on('roomCreated', (data) => { transitionToLobby(data); });
+        socket.on('roomJoined', (data) => {
+            transitionToLobby(data);
+            document.getElementById('start-btn').classList.add('hidden'); // Only host starts match
+        });
+
+        socket.on('roomUpdated', (data) => { updatePlayerList(data.players); });
+        socket.on('errorMsg', (msg) => { alert(msg); });
+
+        socket.on('gameStarted', (data) => {
+            document.getElementById('lobby-screen').classList.add('hidden');
+            document.getElementById('game-screen').classList.remove('hidden');
+            renderGameState(data);
+        });
+
+        socket.on('gameUpdated', (data) => { renderGameState(data); });
+
+        socket.on('yourHand', (hand) => {
+            const handContainer = document.getElementById('hand-container');
+            handContainer.innerHTML = '';
+            hand.forEach((card, index) => {
+                const element = document.createElement('div');
+                element.className = `card ${card.color}`;
+                element.innerText = card.type;
+                element.onclick = () => playCard(index);
+                handContainer.appendChild(element);
+            });
+        });
+
+        socket.on('gameOver', (data) => {
+            alert(`🏆 Game Over! Winner: ${data.winner}`);
+            location.reload();
+        });
+
+        // View Rendering Helpers
+        function transitionToLobby(data) {
+            currentLobbyCode = data.code;
+            document.getElementById('step-choice').classList.add('hidden');
+            document.getElementById('step-join-code').classList.add('hidden');
+            document.getElementById('lobby-screen').classList.remove('hidden');
+            document.getElementById('display-code').innerText = currentLobbyCode;
+            updatePlayerList(data.players);
+        }
+
+        function updatePlayerList(players) {
+            const list = document.getElementById('player-list');
+            list.innerHTML = '';
+            players.forEach(p => {
+                const div = document.createElement('div');
+                div.className = 'player-tag';
+                div.innerText = p.name;
+                list.appendChild(div);
+            });
+        }
+
+        function renderGameState(data) {
+            const turnIndicator = document.getElementById('turn-indicator');
+            const activePlayer = data.players[data.currentTurn];
+            
+            if (activePlayer.id === myPlayerId) {
+                turnIndicator.className = 'turn-highlight';
+                turnIndicator.innerText = "⭐ It's YOUR Turn! Make your play.";
+            } else {
+                turnIndicator.className = '';
+                turnIndicator.innerText = `Waiting for ${activePlayer.name}'s turn...`;
+            }
+
+            const opsStatus = document.getElementById('opponents-status');
+            opsStatus.innerHTML = '<strong>Player Standings:</strong><br>';
+            data.players.forEach(p => {
+                opsStatus.innerHTML += `${p.name}: ${p.cardCount} cards ${(p.id === activePlayer.id) ? '◀' : ''}<br>`;
+            });
+
+            const topCardContainer = document.getElementById('top-card-container');
+            topCardContainer.innerHTML = '';
+            const topCard = document.createElement('div');
+            topCard.className = `card ${data.topCard.color}`;
+            topCard.style.cursor = 'default';
+            topCard.innerText = data.topCard.type;
+            topCardContainer.appendChild(topCard);
+        }
+    </script>
+</body>
+</html>
